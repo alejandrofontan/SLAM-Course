@@ -40,7 +40,6 @@ from tools.visualization.visualization import plot_state       # port of plotSta
 # Configuration
 # ---------------------------------------------------------------------------
 DATASET_PATH = os.path.join(os.path.dirname(__file__), "../datasets/dataset_point.g2o")
-DATASET_GT_PATH = os.path.join(os.path.dirname(__file__), "../datasets/dataset_point_gt_extended.g2o")
 ID_MAP_SIZE  = 10_000          # buffer size for id <-> state index mappings
 PAUSE_SEC    = 0.1             # delay between frames (replaces pause(.1))
 
@@ -53,12 +52,6 @@ def main() -> None:
 
     # Load dataset (landmarks slot is intentionally ignored — no prior map)
     _, poses, transitions, observations = load_g2o(DATASET_PATH)
-
-    #print("initial pose from dataset (ignored): "
-    #      f"[{poses[0].x:.6f}, {poses[0].y:.6f}, {poses[0].theta:.6f}]")
-    #print("initial transition from dataset (ignored): "
-    #      f"[{transitions[0].delta[0]:.6f}, {transitions[0].delta[1]:.6f}, {transitions[0].delta[2]:.6f}, {transitions[0].from_id:.6f}, {transitions[0].to_id:.6f}]")
-    #print(f"initial observations from dataset (ignored): {len(observations[0].observation[0])}, {len(observations[0].observation[1])} , {observations[0].pose_id}, {observations[0].landmark_id} landmarks observed")
 
     # Initial pose at the origin
     initial_pose = np.array([poses[0].x, poses[0].y, poses[0].theta])
@@ -114,7 +107,6 @@ def main() -> None:
             print(
                 f"current pose: [{mu[0]:.6f}, {mu[1]:.6f}, {mu[2]:.6f}], "
                 f"map size (landmarks): {n_landmarks}, "
-                f"gt pose: [{poses[t+1].x:.6f}, {poses[t+1].y:.6f}, {poses[t+1].theta:.6f}]"
             )
 
             trajectory.append(mu[:2].copy())

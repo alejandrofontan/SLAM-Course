@@ -103,7 +103,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Add Gaussian noise to EDGE_SE2 and EDGE_SE2_XY in a .g2o file."
     )
-    parser.add_argument("--input",  default="datasets/dataset_point_gt_extended_long2.g2o")
+    parser.add_argument("--input",  default="datasets/dataset_point_gt.g2o")
     parser.add_argument("--output", default="datasets/dataset_point.g2o")
 
     # EDGE_SE2 noise std devs
