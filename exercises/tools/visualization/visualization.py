@@ -634,6 +634,7 @@ def draw_robot(
 def draw_trajectory_xy(
     ax: plt.Axes,
     trajectory: np.ndarray,
+    color: str = "k",
 ) -> None:
     """
     Draw the robot trajectory as a thick black polyline.
@@ -645,7 +646,7 @@ def draw_trajectory_xy(
     if len(trajectory) < 2:
         return
     traj = np.asarray(trajectory)
-    ax.plot(traj[:, 0], traj[:, 1], "k-", linewidth=2)
+    ax.plot(traj[:, 0], traj[:, 1], "k-", linewidth=2, color=color)
 
 
 # ---------------------------------------------------------------------------
@@ -742,10 +743,10 @@ def plot_state(
     else:
         draw_trajectory_xy(ax, trajectory)
         if traj_gt_array is not None:
-            draw_trajectory_xy(ax, traj_gt_array)
+            draw_trajectory_xy(ax, traj_gt_array, color = 'g')
         draw_observations(ax, robot_pose, observations_t)
         draw_landmarks(ax, landmarks)
-        
+
         # robot covariance
         plot_cov_2d(ax, robot_pose[0], robot_pose[1], sigma[0:2, 0:2], color="k", sigma_factor=1)
 
