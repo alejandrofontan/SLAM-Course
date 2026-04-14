@@ -711,6 +711,7 @@ def plot_state(
     sigma: np.ndarray,
     observations_t,
     trajectory: Optional[np.ndarray] = None,
+    traj_gt_array: Optional[np.ndarray] = None,
 ) -> None:
     """
     Full EKF state visualisation (port of plotState.m).
@@ -740,9 +741,11 @@ def plot_state(
         draw_robot(ax, robot_pose)
     else:
         draw_trajectory_xy(ax, trajectory)
+        if traj_gt_array is not None:
+            draw_trajectory_xy(ax, traj_gt_array)
         draw_observations(ax, robot_pose, observations_t)
         draw_landmarks(ax, landmarks)
-
+        
         # robot covariance
         plot_cov_2d(ax, robot_pose[0], robot_pose[1], sigma[0:2, 0:2], color="k", sigma_factor=1)
 

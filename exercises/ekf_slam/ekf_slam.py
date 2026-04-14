@@ -40,6 +40,7 @@ from tools.visualization.visualization import plot_state       # port of plotSta
 # Configuration
 # ---------------------------------------------------------------------------
 DATASET_PATH = os.path.join(os.path.dirname(__file__), "../datasets/dataset_point.g2o")
+DATASET_GT_PATH = os.path.join(os.path.dirname(__file__), "../datasets/dataset_point_gt_extended.g2o")
 ID_MAP_SIZE  = 10_000          # buffer size for id <-> state index mappings
 PAUSE_SEC    = 0.1             # delay between frames (replaces pause(.1))
 
@@ -53,10 +54,16 @@ def main() -> None:
     # Load dataset (landmarks slot is intentionally ignored — no prior map)
     _, poses, transitions, observations = load_g2o(DATASET_PATH)
 
+    #print("initial pose from dataset (ignored): "
+    #      f"[{poses[0].x:.6f}, {poses[0].y:.6f}, {poses[0].theta:.6f}]")
+    #print("initial transition from dataset (ignored): "
+    #      f"[{transitions[0].delta[0]:.6f}, {transitions[0].delta[1]:.6f}, {transitions[0].delta[2]:.6f}, {transitions[0].from_id:.6f}, {transitions[0].to_id:.6f}]")
+    #print(f"initial observations from dataset (ignored): {len(observations[0].observation[0])}, {len(observations[0].observation[1])} , {observations[0].pose_id}, {observations[0].landmark_id} landmarks observed")
+
     # Initial pose at the origin
-    mu = np.array([0.0,   # x
-                   0.0,   # y
-                   0.0])  # theta (yaw)
+    initial_pose = np.array([poses[0].x, poses[0].y, poses[0].theta])
+
+    mu = np.array(initial_pose)  # theta (yaw)
     print(f"initial pose: [{mu[0]:.6f}, {mu[1]:.6f}, {mu[2]:.6f}]")
 
     # Initial covariance: high uncertainty
@@ -72,6 +79,7 @@ def main() -> None:
     fig.canvas.manager.set_window_title("ekf_slam")
     plt.ion()
     trajectory = [mu[:2].copy()]   # list of [x, y] snapshots
+    trajectory_gt = []   # list of [x, y, theta] snapshots
 
     # ---------------------------------------------------------------------------
     # Main simulation loop
@@ -105,18 +113,52 @@ def main() -> None:
 
             print(
                 f"current pose: [{mu[0]:.6f}, {mu[1]:.6f}, {mu[2]:.6f}], "
-                f"map size (landmarks): {n_landmarks}"
+                f"map size (landmarks): {n_landmarks}, "
+                f"gt pose: [{poses[t+1].x:.6f}, {poses[t+1].y:.6f}, {poses[t+1].theta:.6f}]"
             )
 
             trajectory.append(mu[:2].copy())
             traj_array = np.array(trajectory)
-
-            plot_state(ax, lm_list, mu, sigma, observations_t, traj_array)
+            trajectory_gt.append([poses[t+1].x, poses[t+1].y, poses[t+1].theta])
+            traj_gt_array = np.array(trajectory_gt)
+            plot_state(ax, lm_list, mu, sigma, observations_t, traj_array, traj_gt_array)
             plt.pause(PAUSE_SEC)
 
     plt.ioff()
     plt.show()
 
+    plot_errors(traj_array, traj_gt_array)
+
+def plot_errors(traj: np.ndarray, traj_gt: np.ndarray) -> None:
+    """
+    Plot the per-timestep translation error and print the final RMSE.
+
+    Parameters
+    ----------
+    traj    : (T, 2) array of EKF [x, y] estimates
+    traj_gt : (T, 3) array of GT  [x, y, theta]
+    """
+    # Align lengths (traj has an extra initial point before the first transition)
+    n = min(len(traj), len(traj_gt))
+    est = traj[-n:]
+    gt  = traj_gt[-n:]
+
+    errors = np.sqrt((est[:, 0] - gt[:, 0])**2 + (est[:, 1] - gt[:, 1])**2)
+    rmse   = np.sqrt(np.mean(errors**2))
+
+    print(f"\nTranslation RMSE: {rmse:.4f} m")
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.plot(errors, color="steelblue", linewidth=1.5, label="Translation error")
+    ax.axhline(rmse, color="red", linewidth=1.2, linestyle="--",
+               label=f"RMSE = {rmse:.4f} m")
+    ax.set_xlabel("Timestep")
+    ax.set_ylabel("Error  [m]")
+    ax.set_title("EKF SLAM — Translation Error over Time")
+    ax.legend()
+    ax.grid(True, linestyle="--", alpha=0.5)
+    plt.tight_layout()
+    plt.show()
 
 if __name__ == "__main__":
     main()
