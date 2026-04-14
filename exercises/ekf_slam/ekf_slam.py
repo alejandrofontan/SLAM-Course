@@ -28,7 +28,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 # --- local imports (mirror the addpath / source calls) --------------------
 from tools.g2o_wrapper.load_g2o import load_g2o, Landmark   # port of loadG2o.m
-from exercise.ekf_functions import (             # swap for solution.ekf_functions if needed
+from solution.ekf_functions import (             # swap for solution.ekf_functions if needed
     prediction,
     correction,
     add_new_landmarks,
