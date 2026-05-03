@@ -181,9 +181,11 @@ def main():
                 T_cam_marker = rvec_tvec_to_matrix(rvecs[i], tvecs[i])
                 T_world_marker = T_world_cam @ T_cam_marker
 
-                # Accumulate every world-frame observation of this marker for visualisation.
-                # setdefault initialises the list on the first sighting; subsequent sightings append.
-                # Having all observations lets us average the pose later for a more stable display.
+                # Accumulate world-frame observations for the live plot only.
+                # redraw() calls mean_pose() on this list each frame, averaging all past sightings
+                # into a single stable marker position. Without accumulation the marker plane would
+                # jitter with each noisy PnP estimate. The final static plot ignores marker_poses
+                # and uses opt_marker_poses extracted from the optimiser result instead.
                 marker_poses.setdefault(int(marker_id), []).append(T_world_marker)
 
                 T_cam_marker_gtsam = gtsam.Pose3(gtsam.Rot3(T_cam_marker[:3, :3]), gtsam.Point3(*T_cam_marker[:3, 3]))
