@@ -28,6 +28,7 @@ DATA_DIR = Path("/home/alejandro/VSLAM-LAB-Benchmark/STRAYSCANNER/bb7e805d7c")
 MARKER_LENGTH = 0.15  # physical marker side length in metres — adjust as needed
 ARUCO_DICT = cv2.aruco.DICT_6X6_50
 PLOT_EVERY = 10        # redraw every N frames for speed
+AVERAGE_MARKER_POSES = False  # True: average all past observations; False: show only the latest
 
 def main():
 
@@ -181,13 +182,21 @@ def main():
                 T_cam_marker = rvec_tvec_to_matrix(rvecs[i], tvecs[i])
                 T_world_marker = T_world_cam @ T_cam_marker
 
-                # Accumulate world-frame observations for the live plot only.
-                # redraw() calls mean_pose() on this list each frame, averaging all past sightings
-                # into a single stable marker position. Without accumulation the marker plane would
-                # jitter with each noisy PnP estimate. The final static plot ignores marker_poses
-                # and uses opt_marker_poses extracted from the optimiser result instead.
-                marker_poses.setdefault(int(marker_id), []).append(T_world_marker)
+                # Store world-frame observations for the live plot.
+                # AVERAGE_MARKER_POSES=True: accumulate all sightings so mean_pose() can average
+                # them into a stable position (less jitter). False: keep only the latest estimate.
+                if AVERAGE_MARKER_POSES:
+                    marker_poses.setdefault(int(marker_id), []).append(T_world_marker)
+                else:
+                    marker_poses[int(marker_id)] = [T_world_marker]
 
+                # Add an ArUco measurement factor to the graph.
+                # BetweenFactorPose3(X(i), L(id), T_cam_marker) encodes the constraint:
+                #   "at frame i, the camera observed marker id at relative pose T_cam_marker."
+                # The optimiser will adjust both X(i) and L(id) to best satisfy all such
+                # constraints simultaneously, weighted by MEASUREMENT_NOISE.
+                # L(marker_id) is initialised only on its first sighting (exists() guard):
+                # subsequent detections just add more factors without touching initial_estimate.
                 T_cam_marker_gtsam = gtsam.Pose3(gtsam.Rot3(T_cam_marker[:3, :3]), gtsam.Point3(*T_cam_marker[:3, 3]))
                 graph.add(gtsam.BetweenFactorPose3(X(frame_idx), L(marker_id), T_cam_marker_gtsam, MEASUREMENT_NOISE))
                 if not initial_estimate.exists(L(marker_id)):
@@ -195,6 +204,8 @@ def main():
                     initial_estimate.insert(L(marker_id), T_world_marker_gtsam)
 
 
+        # Append the current camera position to the trajectory and refresh the live plot.
+        # redraw is called only every PLOT_EVERY frames to avoid slowing down processing.
         cam_pos = T_world_cam[:3, 3]
         traj_pts.append(cam_pos.copy())
         if frame_idx % PLOT_EVERY == 0:
@@ -202,6 +213,12 @@ def main():
                    traj_pts, T_world_cam, K, marker_poses)
 
     # --- optimise ---
+    # LevenbergMarquardtOptimizer minimises the total factor graph error — the sum of
+    # squared, noise-weighted residuals from all prior, odometry, and measurement factors.
+    # It iterates by linearising the nonlinear cost around the current estimate and solving
+    # the resulting linear system, damping the step with a trust-region parameter (lambda).
+    # graph.error() evaluates the objective at a given Values; comparing initial vs. final
+    # error gives a quick sanity check that the optimisation converged and improved the estimate.
     params = gtsam.LevenbergMarquardtParams()
     optimizer = gtsam.LevenbergMarquardtOptimizer(graph, initial_estimate, params)
     result = optimizer.optimize()
