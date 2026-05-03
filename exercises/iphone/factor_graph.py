@@ -28,7 +28,7 @@ from gtsam.symbol_shorthand import L, X
 # local
 from dataset import load_camera_matrix, load_camera_poses
 from math_utilities import rvec_tvec_to_matrix
-from visualization import plot_optimised_result, setup_plot, redraw
+from visualization import animate_optimisation, plot_optimised_result, setup_plot, redraw
 
 # Download and extract the exercise data from HuggingFace:
 # https://huggingface.co/datasets/vslamlab/slam_course_data/blob/main/s11_loop.zip
@@ -239,11 +239,12 @@ def main():
     # error gives a quick sanity check that the optimisation converged and improved the estimate.
     params = gtsam.LevenbergMarquardtParams()
     optimizer = gtsam.LevenbergMarquardtOptimizer(graph, initial_estimate, params)
-    result = optimizer.optimize()
     print(f"\nInitial error: {graph.error(initial_estimate):.4f}")
-    print(f"Final error:   {graph.error(result):.4f}")
-
     plt.close(fig)
+    result = animate_optimisation(optimizer, graph, initial_estimate, traj_pts,
+                                  last_T_world_cam, K, MARKER_LENGTH, params)
+
+    print(f"Final error:   {graph.error(result):.4f}")
     plot_optimised_result(result, initial_estimate, traj_pts, gt_pts,
                           last_frame_rgb, last_corners, last_ids, last_T_world_cam, K, MARKER_LENGTH)
 

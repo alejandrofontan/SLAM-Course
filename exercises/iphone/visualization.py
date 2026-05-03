@@ -121,8 +121,99 @@ def redraw(ax_img, ax_3d, frame_rgb, corners, ids, traj_pts, T_world_cam, K, mar
         color = "green" if visible else "black"
         ax_3d.text(t[0], t[1], t[2], f" {marker_id}", fontsize=8, color=color)
 
-    ax_3d.legend(loc="upper left", fontsize=8)
+    if ax_3d.get_legend_handles_labels()[0]:
+        ax_3d.legend(loc="upper left", fontsize=8)
     plt.pause(0.001)
+
+def animate_optimisation(optimizer, graph, initial_estimate, traj_pts,
+                         last_T_world_cam, K, marker_length: float,
+                         params=None, img_size: tuple = (640, 480)):
+    """Run LM iterations one at a time, updating a live split view:
+      left  — factor-graph error convergence curve (log scale)
+      right — 3-D trajectories morphing toward the optimised solution
+
+    Returns the final optimised Values.
+    """
+    if params is None:
+        params = gtsam.LevenbergMarquardtParams()
+    max_iter = params.getMaxIterations()
+    rel_tol  = params.getRelativeErrorTol()
+    abs_tol  = params.getAbsoluteErrorTol()
+
+    plt.ion()
+    fig = plt.figure(figsize=(14, 6))
+    ax_err = fig.add_subplot(121)
+    ax_3d  = fig.add_subplot(122, projection="3d")
+    fig.suptitle("Levenberg–Marquardt optimisation", fontsize=11)
+
+    errors = [graph.error(initial_estimate)]
+
+    for _ in range(max_iter):
+        optimizer.iterate()
+        curr_error = optimizer.error()
+        errors.append(curr_error)
+        prev_error = errors[-2]
+        if abs(prev_error - curr_error) < abs_tol:
+            break
+        if prev_error > 0 and abs(prev_error - curr_error) / prev_error < rel_tol:
+            break
+
+        current = optimizer.values()
+
+        # extract current camera trajectory and landmark poses
+        opt_traj_pts: list = []
+        opt_marker_poses: dict = {}
+        for key in sorted(initial_estimate.keys()):
+            sym  = gtsam.Symbol(key)
+            pose = current.atPose3(key)
+            t    = np.array(pose.translation())
+            R    = pose.rotation().matrix()
+            T    = np.eye(4); T[:3, :3] = R; T[:3, 3] = t
+            if chr(sym.chr()) == "x":
+                opt_traj_pts.append(t.copy())
+            else:
+                opt_marker_poses[sym.index()] = [T]
+
+        # --- error curve ---
+        ax_err.cla()
+        ax_err.semilogy(errors, color="steelblue", linewidth=1.5)
+        ax_err.set_xlabel("Iteration")
+        ax_err.set_ylabel("Factor graph error (log)")
+        ax_err.set_title(f"Convergence  —  iter {len(errors) - 1}  |  error {errors[-1]:.4f}")
+        ax_err.grid(True, which="both", alpha=0.3)
+
+        # --- 3-D map ---
+        ax_3d.cla()
+        ax_3d.set_xlabel("X (m)")
+        ax_3d.set_ylabel("Y (m)")
+        ax_3d.set_zlabel("Z (m)")
+        ax_3d.set_title("Trajectory")
+
+        if len(traj_pts) > 1:
+            traj = np.array(traj_pts)
+            ax_3d.plot(traj[:, 0], traj[:, 1], traj[:, 2],
+                       color="steelblue", linewidth=1, alpha=0.4, label="odometry")
+
+        if len(opt_traj_pts) > 1:
+            opt = np.array(opt_traj_pts)
+            ax_3d.plot(opt[:, 0], opt[:, 1], opt[:, 2],
+                       color="green", linewidth=1, label="optimised")
+
+        draw_camera_frustum(ax_3d, last_T_world_cam, K, marker_length, img_size)
+
+        for marker_id, transforms in opt_marker_poses.items():
+            R, t = mean_pose(transforms)
+            draw_marker_frame(ax_3d, R, t, visible=True, marker_length=marker_length)
+            ax_3d.text(t[0], t[1], t[2], f" {marker_id}", fontsize=8, color="green")
+
+        ax_3d.legend(loc="upper left", fontsize=8)
+        fig.tight_layout()
+        plt.waitforbuttonpress()
+
+    plt.ioff()
+    plt.close(fig)
+    return optimizer.values()
+
 
 def plot_optimised_result(result, initial_estimate, traj_pts, gt_pts,
                           last_frame_rgb, last_corners, last_ids, last_T_world_cam, K,
