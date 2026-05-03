@@ -124,7 +124,7 @@ def redraw(ax_img, ax_3d, frame_rgb, corners, ids, traj_pts, T_world_cam, K, mar
     ax_3d.legend(loc="upper left", fontsize=8)
     plt.pause(0.001)
 
-def plot_optimised_result(result, initial_estimate, traj_pts,
+def plot_optimised_result(result, initial_estimate, traj_pts, gt_pts,
                           last_frame_rgb, last_corners, last_ids, last_T_world_cam, K,
                           marker_length: float, img_size: tuple = (640, 480)):
     # Extract optimised camera trajectory and landmark poses from the GTSAM result.
@@ -143,8 +143,10 @@ def plot_optimised_result(result, initial_estimate, traj_pts,
             opt_marker_poses[sym.index()] = [T]
 
     plt.ioff()
-    fig_final = plt.figure(figsize=(16, 7))
-    ax_img_f = fig_final.add_subplot(121)
+
+    # --- Figure 1: last frame image ---
+    fig_img = plt.figure(figsize=(8, 6))
+    ax_img_f = fig_img.add_subplot(111)
     ax_img_f.axis("off")
     ax_img_f.set_title("Last frame")
     if last_frame_rgb is not None:
@@ -152,34 +154,65 @@ def plot_optimised_result(result, initial_estimate, traj_pts,
         if last_ids is not None:
             cv2.aruco.drawDetectedMarkers(display, last_corners, last_ids)
         ax_img_f.imshow(display)
+    fig_img.tight_layout()
 
-    ax_3d_f = fig_final.add_subplot(122, projection="3d")
+    # --- Figure 2: 3-D map (same style as live redraw) ---
+    fig_3d = plt.figure(figsize=(8, 8))
+    ax_3d_f = fig_3d.add_subplot(111, projection="3d")
     ax_3d_f.set_xlabel("X (m)")
     ax_3d_f.set_ylabel("Y (m)")
     ax_3d_f.set_zlabel("Z (m)")
     ax_3d_f.set_title("Final optimised map")
 
-    # odometry trajectory (red)
     if len(traj_pts) > 1:
-        gt = np.array(traj_pts)
-        ax_3d_f.plot(gt[:, 0], gt[:, 1], gt[:, 2],
-                     color="red", linewidth=1, label="odometry")
+        traj = np.array(traj_pts)
+        ax_3d_f.plot(traj[:, 0], traj[:, 1], traj[:, 2],
+                     color="steelblue", linewidth=1, label="odometry")
 
-    # optimised camera trajectory (green)
     if len(opt_traj_pts) > 1:
         opt = np.array(opt_traj_pts)
         ax_3d_f.plot(opt[:, 0], opt[:, 1], opt[:, 2],
                      color="green", linewidth=1, label="optimised")
 
-    # optimised camera frustum at last pose
+    gt_valid = [p for p in gt_pts if p is not None]
+    if len(gt_valid) > 1:
+        gt_arr = np.array(gt_valid)
+        ax_3d_f.plot(gt_arr[:, 0], gt_arr[:, 1], gt_arr[:, 2],
+                     color="red", linewidth=1, linestyle="--", label="ground truth")
+
     draw_camera_frustum(ax_3d_f, last_T_world_cam, K, marker_length, img_size)
 
-    # optimised ArUco landmarks — all visible (green), same style as live plot
     for marker_id, transforms in opt_marker_poses.items():
         R, t = mean_pose(transforms)
         draw_marker_frame(ax_3d_f, R, t, visible=True, marker_length=marker_length)
         ax_3d_f.text(t[0], t[1], t[2], f" {marker_id}", fontsize=8, color="green")
 
     ax_3d_f.legend(loc="upper left", fontsize=8)
-    fig_final.tight_layout()
+
+    # --- Figure 3: ATE per frame vs ground truth ---
+    fig_ate = plt.figure(figsize=(10, 4))
+    ax_ate = fig_ate.add_subplot(111)
+    n = min(len(traj_pts), len(opt_traj_pts), len(gt_pts))
+    # keep only frames where a GT position is available
+    valid_idx = [i for i in range(n) if gt_pts[i] is not None]
+    if valid_idx:
+        frames    = np.array(valid_idx)
+        odom_arr  = np.array([traj_pts[i]     for i in valid_idx])
+        opt_arr   = np.array([opt_traj_pts[i]  for i in valid_idx])
+        gt_arr    = np.array([gt_pts[i]        for i in valid_idx])
+        ate_odom  = np.linalg.norm(odom_arr - gt_arr, axis=1)
+        ate_opt   = np.linalg.norm(opt_arr  - gt_arr, axis=1)
+        rmse_odom = float(np.sqrt(np.mean(ate_odom ** 2)))
+        rmse_opt  = float(np.sqrt(np.mean(ate_opt  ** 2)))
+        ax_ate.plot(frames, ate_odom, color="steelblue", linewidth=1,
+                    label=f"odometry  (RMSE = {rmse_odom:.4f} m)")
+        ax_ate.plot(frames, ate_opt,  color="green",     linewidth=1,
+                    label=f"optimised (RMSE = {rmse_opt:.4f} m)")
+        ax_ate.set_title("ATE vs ground truth")
+        ax_ate.set_xlabel("Frame")
+        ax_ate.set_ylabel("Translation error (m)")
+        ax_ate.legend(fontsize=8)
+        ax_ate.grid(True, alpha=0.3)
+    fig_ate.tight_layout()
+
     plt.show()

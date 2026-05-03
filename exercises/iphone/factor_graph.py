@@ -26,11 +26,15 @@ import numpy as np
 from gtsam.symbol_shorthand import L, X
 
 # local
-from dataset import load_camera_matrix, load_odometry_poses
+from dataset import load_camera_matrix, load_camera_poses
 from math_utilities import rvec_tvec_to_matrix
 from visualization import plot_optimised_result, setup_plot, redraw
 
-DATA_DIR = Path("/home/alejandro/VSLAM-LAB-Benchmark/STRAYSCANNER/bb7e805d7c")
+# Download and extract the exercise data from HuggingFace:
+# https://huggingface.co/datasets/vslamlab/slam_course_data/blob/main/s11_loop.zip
+
+# Adjust DATA_DIR below to point at whichever sequence you want to run.
+DATA_DIR = Path("s11_loop")
 MARKER_LENGTH = 0.15  # physical marker side length in metres — adjust as needed
 ARUCO_DICT = cv2.aruco.DICT_6X6_50
 PLOT_EVERY = 10        # redraw every N frames for speed
@@ -46,10 +50,13 @@ def main():
     K, dist = load_camera_matrix(DATA_DIR / "calibration.yaml")
 
     # odom_poses is a dict {timestamp_ns: T_world_cam} where T_world_cam is a 4x4 SE(3) matrix.
-    # It expresses the position and orientation of the camera in the world frame at each instant.
-    # We use it as odometry: the relative motion between consecutive frames becomes
-    # a BetweenFactor constraint in the factor graph.
-    odom_poses = load_odometry_poses(DATA_DIR / "groundtruth.csv")
+    # It expresses the position and orientation of the camera in the world frame at each instant,
+    # as estimated by the device's visual-inertial odometry (CameraTrajectory.csv).
+    # The relative motion between consecutive frames becomes a BetweenFactor in the factor graph.
+    # gt_poses holds the same structure but from the reference groundtruth trajectory,
+    # used only for evaluation (ATE computation), not as a factor graph constraint.
+    odom_poses = load_camera_poses(DATA_DIR / "CameraTrajectory.csv")
+    gt_poses = load_camera_poses(DATA_DIR / "groundtruth.csv")
 
     # ArucoDetector identifies ArUco markers in a greyscale image.
     # getPredefinedDictionary selects which set of marker patterns to look for
@@ -104,6 +111,7 @@ def main():
     fig, ax_img, ax_3d = setup_plot()  # live plot figure and axes
     marker_poses: dict[int, list] = {}  # marker_id → list of T_world_marker (4x4), used to average poses
     traj_pts = []                      # camera positions in world frame (odometry trajectory)
+    gt_pts   = []                      # ground-truth positions aligned to traj_pts (None if unavailable)
     last_frame_rgb = None              # last RGB frame shown in the image panel
     last_corners, last_ids = None, None  # ArUco detections of the last frame (for final plot)
     last_T_world_cam = np.eye(4)       # camera pose of the last frame (for final frustum)
@@ -116,7 +124,9 @@ def main():
     #   3. Update the live visualisation every PLOT_EVERY frames.
     for frame_idx, (ts_ns, rel_path) in enumerate(image_paths):
         T_world_cam = odom_poses.get(ts_ns)
-
+        if T_world_cam is None:
+            print(f"Warning: no odometry pose for timestamp {ts_ns} (frame {frame_idx}) — skipping")
+            continue
         # Convert the 4x4 numpy matrix to a GTSAM Pose3 (rotation + translation).
         # Rot3 wraps the 3x3 rotation matrix; Point3 wraps the translation vector.
         # This pose is inserted into initial_estimate as the starting value for
@@ -214,6 +224,8 @@ def main():
         # redraw is called only every PLOT_EVERY frames to avoid slowing down processing.
         cam_pos = T_world_cam[:3, 3]
         traj_pts.append(cam_pos.copy())
+        gt_T = gt_poses.get(ts_ns)
+        gt_pts.append(gt_T[:3, 3].copy() if gt_T is not None else None)
         if frame_idx % PLOT_EVERY == 0:
             redraw(ax_img, ax_3d, frame_rgb, corners, ids,
                    traj_pts, T_world_cam, K, marker_poses, MARKER_LENGTH)
@@ -232,7 +244,7 @@ def main():
     print(f"Final error:   {graph.error(result):.4f}")
 
     plt.close(fig)
-    plot_optimised_result(result, initial_estimate, traj_pts,
+    plot_optimised_result(result, initial_estimate, traj_pts, gt_pts,
                           last_frame_rgb, last_corners, last_ids, last_T_world_cam, K, MARKER_LENGTH)
 
 if __name__ == "__main__":

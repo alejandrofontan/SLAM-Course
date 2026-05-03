@@ -51,7 +51,7 @@ def quat_trans_to_matrix(q, t) -> np.ndarray:
     T[:3, 3] = t
     return T
 
-def load_odometry_poses(gt_path: Path) -> dict:
+def load_camera_poses(gt_path: Path) -> dict:
     """Returns {ts_ns: T_world_camera (4x4)} indexed by timestamp."""
     poses = {}
     with open(gt_path) as f:
