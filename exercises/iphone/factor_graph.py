@@ -22,13 +22,14 @@ from gtsam.symbol_shorthand import L, X
 
 from dataset import load_camera_matrix, load_odometry_poses
 from math_utilities import rvec_tvec_to_matrix
-from visualization import mean_pose, draw_camera_frustum, draw_marker_frame, setup_plot, redraw
+from visualization import plot_optimised_result, setup_plot, redraw
 
 DATA_DIR = Path("/home/alejandro/VSLAM-LAB-Benchmark/STRAYSCANNER/bb7e805d7c")
 MARKER_LENGTH = 0.15  # physical marker side length in metres — adjust as needed
 ARUCO_DICT = cv2.aruco.DICT_6X6_50
 PLOT_EVERY = 10        # redraw every N frames for speed
 AVERAGE_MARKER_POSES = False  # True: average all past observations; False: show only the latest
+
 
 def main():
 
@@ -225,62 +226,9 @@ def main():
     print(f"\nInitial error: {graph.error(initial_estimate):.4f}")
     print(f"Final error:   {graph.error(result):.4f}")
 
-    # rebuild trajectory and marker poses from optimised result for final redraw
-    opt_traj_pts = []
-    opt_marker_poses: dict[int, list] = {}
-    for key in sorted(initial_estimate.keys()):
-        sym = gtsam.Symbol(key)
-        pose = result.atPose3(key)
-        T = np.eye(4)
-        T[:3, :3] = pose.rotation().matrix()
-        T[:3, 3] = pose.translation()
-        if chr(sym.chr()) == "x":
-            opt_traj_pts.append(T[:3, 3].copy())
-        else:
-            opt_marker_poses[sym.index()] = [T]
-
-    # --- final static plot ---
-    plt.ioff()
-    fig_final = plt.figure(figsize=(16, 7))
-    ax_img_f = fig_final.add_subplot(121)
-    ax_img_f.axis("off")
-    ax_img_f.set_title("Last frame")
-    if last_frame_rgb is not None:
-        display = last_frame_rgb.copy()
-        if last_ids is not None:
-            cv2.aruco.drawDetectedMarkers(display, last_corners, last_ids)
-        ax_img_f.imshow(display)
-
-    ax_3d_f = fig_final.add_subplot(122, projection="3d")
-    ax_3d_f.set_xlabel("X (m)")
-    ax_3d_f.set_ylabel("Y (m)")
-    ax_3d_f.set_zlabel("Z (m)")
-    ax_3d_f.set_title("Final optimised map")
-
-    # odometry trajectory (red)
-    if len(traj_pts) > 1:
-        gt = np.array(traj_pts)
-        ax_3d_f.plot(gt[:, 0], gt[:, 1], gt[:, 2],
-                     color="red", linewidth=1, label="odometry")
-
-    # optimised camera trajectory (green)
-    if len(opt_traj_pts) > 1:
-        opt = np.array(opt_traj_pts)
-        ax_3d_f.plot(opt[:, 0], opt[:, 1], opt[:, 2],
-                     color="green", linewidth=1, label="optimised")
-
-    # optimised camera frustum at last pose
-    draw_camera_frustum(ax_3d_f, last_T_world_cam, K)
-
-    # optimised ArUco landmarks — all visible (green), same style as live plot
-    for marker_id, transforms in opt_marker_poses.items():
-        R, t = mean_pose(transforms)
-        draw_marker_frame(ax_3d_f, R, t, visible=True)
-        ax_3d_f.text(t[0], t[1], t[2], f" {marker_id}", fontsize=8, color="green")
-
-    ax_3d_f.legend(loc="upper left", fontsize=8)
-    fig_final.tight_layout()
-    plt.show()
+    plt.close(fig)
+    plot_optimised_result(result, initial_estimate, traj_pts,
+                          last_frame_rgb, last_corners, last_ids, last_T_world_cam, K)
 
 if __name__ == "__main__":
     main()
