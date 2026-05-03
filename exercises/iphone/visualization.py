@@ -1,11 +1,10 @@
 
-import numpy as np
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-
+# third-party
 import cv2
-
 import gtsam
+import matplotlib.pyplot as plt
+import numpy as np
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 def mean_pose(transforms: list) -> tuple[np.ndarray, np.ndarray]:
     """Average a list of 4x4 SE(3) transforms → (R_mean, t_mean).

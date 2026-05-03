@@ -1,7 +1,9 @@
+# standard library
 import csv
-import numpy as np
 from pathlib import Path
 
+# third-party
+import numpy as np
 import yaml
 from scipy.spatial.transform import Rotation
 
