@@ -7,12 +7,6 @@ import cv2
 
 import gtsam
 
-MARKER_LENGTH = 0.15  # physical marker side length in metres — adjust as needed
-PLOT_EVERY = 10        # redraw every N frames for speed
-AXIS_LEN = MARKER_LENGTH * 0.6   # length of the drawn frame axes
-FRUSTUM_DEPTH = MARKER_LENGTH * 0.8  # near-plane distance for the camera frustum
-IMG_W, IMG_H = 640, 480
-
 def mean_pose(transforms: list) -> tuple[np.ndarray, np.ndarray]:
     """Average a list of 4x4 SE(3) transforms → (R_mean, t_mean).
     Rotation is averaged via SVD projection onto SO(3)."""
@@ -25,15 +19,17 @@ def mean_pose(transforms: list) -> tuple[np.ndarray, np.ndarray]:
         R_mean = U @ Vt
     return R_mean, t_mean
 
-def draw_camera_frustum(ax, T_world_cam: np.ndarray, K: np.ndarray):
+def draw_camera_frustum(ax, T_world_cam: np.ndarray, K: np.ndarray,
+                        marker_length: float, img_size: tuple = (640, 480)):
     """Draw a camera frustum pyramid in world frame using the intrinsics."""
     R = T_world_cam[:3, :3]
     t = T_world_cam[:3, 3]
-    d = FRUSTUM_DEPTH
+    d = marker_length * 0.8  # frustum depth scaled to marker size
 
     # unproject image corners to camera frame at depth d
+    img_w, img_h = img_size
     fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
-    corners_img = np.array([[0, 0], [IMG_W, 0], [IMG_W, IMG_H], [0, IMG_H]], dtype=float)
+    corners_img = np.array([[0, 0], [img_w, 0], [img_w, img_h], [0, img_h]], dtype=float)
     corners_cam = np.column_stack([
         (corners_img[:, 0] - cx) / fx * d,
         (corners_img[:, 1] - cy) / fy * d,
@@ -53,14 +49,15 @@ def draw_camera_frustum(ax, T_world_cam: np.ndarray, K: np.ndarray):
     ax.scatter(*t, color="orange", s=30, zorder=5)
 
 
-def draw_marker_frame(ax, R: np.ndarray, t: np.ndarray, visible: bool):
+def draw_marker_frame(ax, R: np.ndarray, t: np.ndarray, visible: bool, marker_length: float):
     """Draw a flat square + XYZ axes for one ArUco marker in world frame."""
     color = "green" if visible else "black"
     alpha = 0.5 if visible else 0.2
-    L = MARKER_LENGTH / 2
+    half = marker_length / 2
+    axis_len = marker_length * 0.6
 
     # marker square corners in marker frame (Z = 0 plane)
-    corners_m = np.array([[-L, -L, 0], [L, -L, 0], [L, L, 0], [-L, L, 0]])
+    corners_m = np.array([[-half, -half, 0], [half, -half, 0], [half, half, 0], [-half, half, 0]])
     corners_w = (R @ corners_m.T).T + t  # (4, 3)
 
     poly = Poly3DCollection([corners_w], alpha=alpha, facecolor=color, edgecolor=color)
@@ -68,7 +65,7 @@ def draw_marker_frame(ax, R: np.ndarray, t: np.ndarray, visible: bool):
 
     # X (red), Y (green), Z (blue) axes
     for axis_idx, axis_color in enumerate(["red", "lime", "blue"]):
-        end = t + R[:, axis_idx] * AXIS_LEN
+        end = t + R[:, axis_idx] * axis_len
         ax.plot([t[0], end[0]], [t[1], end[1]], [t[2], end[2]],
                 color=axis_color, linewidth=1.5)
 
@@ -90,7 +87,8 @@ def setup_plot():
     return fig, ax_img, ax_3d
 
 
-def redraw(ax_img, ax_3d, frame_rgb, corners, ids, traj_pts, T_world_cam, K, marker_poses: dict):
+def redraw(ax_img, ax_3d, frame_rgb, corners, ids, traj_pts, T_world_cam, K, marker_poses: dict,
+           marker_length: float, img_size: tuple = (640, 480)):
     visible_ids = set(ids.ravel().tolist()) if ids is not None else set()
 
     # --- image panel ---
@@ -115,12 +113,12 @@ def redraw(ax_img, ax_3d, frame_rgb, corners, ids, traj_pts, T_world_cam, K, mar
         ax_3d.plot(traj[:, 0], traj[:, 1], traj[:, 2],
                    color="steelblue", linewidth=1, label="trajectory")
 
-    draw_camera_frustum(ax_3d, T_world_cam, K)
+    draw_camera_frustum(ax_3d, T_world_cam, K, marker_length, img_size)
 
     for marker_id, transforms in marker_poses.items():
         R, t = mean_pose(transforms)
         visible = marker_id in visible_ids
-        draw_marker_frame(ax_3d, R, t, visible)
+        draw_marker_frame(ax_3d, R, t, visible, marker_length)
         color = "green" if visible else "black"
         ax_3d.text(t[0], t[1], t[2], f" {marker_id}", fontsize=8, color=color)
 
@@ -128,7 +126,8 @@ def redraw(ax_img, ax_3d, frame_rgb, corners, ids, traj_pts, T_world_cam, K, mar
     plt.pause(0.001)
 
 def plot_optimised_result(result, initial_estimate, traj_pts,
-                          last_frame_rgb, last_corners, last_ids, last_T_world_cam, K):
+                          last_frame_rgb, last_corners, last_ids, last_T_world_cam, K,
+                          marker_length: float, img_size: tuple = (640, 480)):
     # Extract optimised camera trajectory and landmark poses from the GTSAM result.
     # Keys are decoded with gtsam.Symbol to separate X (camera) from L (landmark) variables.
     opt_traj_pts = []
@@ -174,12 +173,12 @@ def plot_optimised_result(result, initial_estimate, traj_pts,
                      color="green", linewidth=1, label="optimised")
 
     # optimised camera frustum at last pose
-    draw_camera_frustum(ax_3d_f, last_T_world_cam, K)
+    draw_camera_frustum(ax_3d_f, last_T_world_cam, K, marker_length, img_size)
 
     # optimised ArUco landmarks — all visible (green), same style as live plot
     for marker_id, transforms in opt_marker_poses.items():
         R, t = mean_pose(transforms)
-        draw_marker_frame(ax_3d_f, R, t, visible=True)
+        draw_marker_frame(ax_3d_f, R, t, visible=True, marker_length=marker_length)
         ax_3d_f.text(t[0], t[1], t[2], f" {marker_id}", fontsize=8, color="green")
 
     ax_3d_f.legend(loc="upper left", fontsize=8)

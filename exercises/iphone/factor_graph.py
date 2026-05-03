@@ -1,25 +1,31 @@
 
 """
-ArUco marker detector for iPhone recordings (StrayScanner format).
-Reads images listed in rgb.csv, detects ArUco markers, and computes:
-  - T_cam_marker : marker pose relative to camera  (per frame)
-  - T_world_marker: marker pose in world frame using groundtruth camera poses
-Live 3-D plot shows trajectory, current camera position, and oriented marker planes.
-Saves per-frame detections and per-marker averaged world positions.
+Factor-graph SLAM exercise for iPhone recordings (StrayScanner format).
+
+Builds a GTSAM factor graph over a sequence of RGB frames:
+  - Camera pose variables X(i)   : one per frame, initialised from visual-inertial odometry.
+  - Landmark variables    L(id)  : one per ArUco marker, initialised from the first detection.
+  - PriorFactorPose3      : anchors X(0) to fix gauge freedom.
+  - BetweenFactorPose3    : odometry edges between consecutive camera poses.
+  - BetweenFactorPose3    : ArUco measurement edges between X(i) and L(id).
+
+After processing all frames the graph is optimised with Levenberg-Marquardt.
+A live 3-D plot shows the odometry trajectory and detected markers during processing;
+a final static plot compares the odometry (red) against the optimised trajectory (green).
 """
 
+# standard library
 import csv
-import sys
 from pathlib import Path
 
-
+# third-party
 import cv2
+import gtsam
 import matplotlib.pyplot as plt
 import numpy as np
-
-import gtsam
 from gtsam.symbol_shorthand import L, X
 
+# local
 from dataset import load_camera_matrix, load_odometry_poses
 from math_utilities import rvec_tvec_to_matrix
 from visualization import plot_optimised_result, setup_plot, redraw
@@ -96,7 +102,6 @@ def main():
     # These accumulate data across frames and are used for visualisation,
     # CSV export, and building the factor graph inside the main loop.
     fig, ax_img, ax_3d = setup_plot()  # live plot figure and axes
-    detections = []                    # flat list of per-frame ArUco observations (for CSV)
     marker_poses: dict[int, list] = {}  # marker_id → list of T_world_marker (4x4), used to average poses
     traj_pts = []                      # camera positions in world frame (odometry trajectory)
     last_frame_rgb = None              # last RGB frame shown in the image panel
@@ -211,7 +216,7 @@ def main():
         traj_pts.append(cam_pos.copy())
         if frame_idx % PLOT_EVERY == 0:
             redraw(ax_img, ax_3d, frame_rgb, corners, ids,
-                   traj_pts, T_world_cam, K, marker_poses)
+                   traj_pts, T_world_cam, K, marker_poses, MARKER_LENGTH)
 
     # --- optimise ---
     # LevenbergMarquardtOptimizer minimises the total factor graph error — the sum of
@@ -228,7 +233,7 @@ def main():
 
     plt.close(fig)
     plot_optimised_result(result, initial_estimate, traj_pts,
-                          last_frame_rgb, last_corners, last_ids, last_T_world_cam, K)
+                          last_frame_rgb, last_corners, last_ids, last_T_world_cam, K, MARKER_LENGTH)
 
 if __name__ == "__main__":
     main()
