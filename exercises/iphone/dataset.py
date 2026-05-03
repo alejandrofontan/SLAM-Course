@@ -6,7 +6,30 @@ import yaml
 from scipy.spatial.transform import Rotation
 
 
-def load_camera_matrix(calib_path: Path):
+def load_camera_matrix(calib_path: Path) -> tuple[np.ndarray, np.ndarray]:
+    """Load intrinsic camera parameters from a YAML calibration file.
+
+    Parameters
+    ----------
+    calib_path : Path
+        Path to the calibration YAML file (e.g. calibration.yaml).
+
+    Returns
+    -------
+    K : np.ndarray, shape (3, 3)
+        Intrinsic matrix:
+            [[fx,  0, cx],
+             [ 0, fy, cy],
+             [ 0,  0,  1]]
+        fx, fy  – focal lengths in pixels (how strongly the lens converges light).
+        cx, cy  – principal point in pixels (where the optical axis hits the image plane,
+                  ideally the image centre).
+        A 3-D point P_c = [X, Y, Z] in camera frame projects to pixel (u, v) as:
+            [u, v, 1]^T  =  (1/Z) * K * P_c
+
+    dist : np.ndarray, shape (4, 1)
+        Lens distortion coefficients [k1, k2, p1, p2].
+    """
     with open(calib_path) as f:
         content = f.read().replace("%YAML 1.2", "")
     data = yaml.safe_load(content)
