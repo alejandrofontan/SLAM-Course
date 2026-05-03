@@ -1,0 +1,27 @@
+graph {
+  size="5,5";
+
+  var7782220156096217089[label="l1", pos="2,2.05!"];
+  var7782220156096217090[label="l2", pos="1.7,4.35!"];
+  var8646911284551352321[label="x1", pos="0.1,0!"];
+  var8646911284551352322[label="x2", pos="0,2.55!"];
+  var8646911284551352323[label="x3", pos="0,4.35!"];
+
+  factor0[label="", shape=point];
+  var8646911284551352321--factor0;
+  factor1[label="", shape=point];
+  var8646911284551352321--factor1;
+  var8646911284551352322--factor1;
+  factor2[label="", shape=point];
+  var8646911284551352322--factor2;
+  var8646911284551352323--factor2;
+  factor3[label="", shape=point];
+  var8646911284551352321--factor3;
+  var7782220156096217089--factor3;
+  factor4[label="", shape=point];
+  var8646911284551352322--factor4;
+  var7782220156096217089--factor4;
+  factor5[label="", shape=point];
+  var8646911284551352323--factor5;
+  var7782220156096217090--factor5;
+}
