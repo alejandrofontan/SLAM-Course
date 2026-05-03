@@ -3,7 +3,7 @@ ArUco marker detector for iPhone recordings (StrayScanner format).
 Reads images listed in rgb.csv, detects ArUco markers, and computes:
   - T_cam_marker : marker pose relative to camera  (per frame)
   - T_world_marker: marker pose in world frame using groundtruth camera poses
-Live 3-D plot shows trajectory, current camera position, and marker positions.
+Live 3-D plot shows trajectory, current camera position, and oriented marker planes.
 Saves per-frame detections and per-marker averaged world positions.
 """
 
@@ -15,11 +15,15 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import yaml
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
-DATA_DIR = Path("/home/alejandro/VSLAM-LAB-Benchmark/STRAYSCANNER/e55d424630")
+DATA_DIR = Path("/home/alejandro/VSLAM-LAB-Benchmark/STRAYSCANNER/bb7e805d7c")
 MARKER_LENGTH = 0.15  # physical marker side length in metres — adjust as needed
 ARUCO_DICT = cv2.aruco.DICT_6X6_50
 PLOT_EVERY = 10        # redraw every N frames for speed
+AXIS_LEN = MARKER_LENGTH * 0.6   # length of the drawn frame axes
+FRUSTUM_DEPTH = MARKER_LENGTH * 0.8  # near-plane distance for the camera frustum
+IMG_W, IMG_H = 640, 480
 
 
 def load_camera_matrix(calib_path: Path):
@@ -72,6 +76,69 @@ def rvec_tvec_to_matrix(rvec, tvec) -> np.ndarray:
     return T
 
 
+def mean_pose(transforms: list) -> tuple[np.ndarray, np.ndarray]:
+    """Average a list of 4x4 SE(3) transforms → (R_mean, t_mean).
+    Rotation is averaged via SVD projection onto SO(3)."""
+    t_mean = np.mean([T[:3, 3] for T in transforms], axis=0)
+    R_sum = sum(T[:3, :3] for T in transforms)
+    U, _, Vt = np.linalg.svd(R_sum)
+    R_mean = U @ Vt
+    if np.linalg.det(R_mean) < 0:  # fix reflection
+        U[:, -1] *= -1
+        R_mean = U @ Vt
+    return R_mean, t_mean
+
+
+def draw_camera_frustum(ax, T_world_cam: np.ndarray, K: np.ndarray):
+    """Draw a camera frustum pyramid in world frame using the intrinsics."""
+    R = T_world_cam[:3, :3]
+    t = T_world_cam[:3, 3]
+    d = FRUSTUM_DEPTH
+
+    # unproject image corners to camera frame at depth d
+    fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
+    corners_img = np.array([[0, 0], [IMG_W, 0], [IMG_W, IMG_H], [0, IMG_H]], dtype=float)
+    corners_cam = np.column_stack([
+        (corners_img[:, 0] - cx) / fx * d,
+        (corners_img[:, 1] - cy) / fy * d,
+        np.full(4, d),
+    ])
+    corners_w = (R @ corners_cam.T).T + t  # (4, 3)
+
+    # 4 lines from camera centre to image-plane corners
+    for c in corners_w:
+        ax.plot([t[0], c[0]], [t[1], c[1]], [t[2], c[2]], color="orange", linewidth=1)
+
+    # image-plane rectangle
+    rect = np.vstack([corners_w, corners_w[0]])
+    ax.plot(rect[:, 0], rect[:, 1], rect[:, 2], color="orange", linewidth=1)
+
+    # camera centre dot
+    ax.scatter(*t, color="orange", s=30, zorder=5)
+
+
+def draw_marker_frame(ax, R: np.ndarray, t: np.ndarray, visible: bool):
+    """Draw a flat square + XYZ axes for one ArUco marker in world frame."""
+    color = "green" if visible else "black"
+    alpha = 0.5 if visible else 0.2
+    L = MARKER_LENGTH / 2
+
+    # marker square corners in marker frame (Z = 0 plane)
+    corners_m = np.array([[-L, -L, 0], [L, -L, 0], [L, L, 0], [-L, L, 0]])
+    corners_w = (R @ corners_m.T).T + t  # (4, 3)
+
+    poly = Poly3DCollection([corners_w], alpha=alpha, facecolor=color, edgecolor=color)
+    ax.add_collection3d(poly)
+
+    # X (red), Y (green), Z (blue) axes
+    for axis_idx, axis_color in enumerate(["red", "lime", "blue"]):
+        end = t + R[:, axis_idx] * AXIS_LEN
+        ax.plot([t[0], end[0]], [t[1], end[1]], [t[2], end[2]],
+                color=axis_color, linewidth=1.5)
+
+    ax.text(t[0], t[1], t[2], f" {'' }", fontsize=0)  # anchor for tight layout
+
+
 def setup_plot():
     plt.ion()
     fig = plt.figure(figsize=(16, 7))
@@ -87,7 +154,7 @@ def setup_plot():
     return fig, ax_img, ax_3d
 
 
-def redraw(ax_img, ax_3d, frame_rgb, corners, ids, traj_pts, cam_pos, marker_world: dict):
+def redraw(ax_img, ax_3d, frame_rgb, corners, ids, traj_pts, T_world_cam, K, marker_poses: dict):
     visible_ids = set(ids.ravel().tolist()) if ids is not None else set()
 
     # --- image panel ---
@@ -112,14 +179,14 @@ def redraw(ax_img, ax_3d, frame_rgb, corners, ids, traj_pts, cam_pos, marker_wor
         ax_3d.plot(traj[:, 0], traj[:, 1], traj[:, 2],
                    color="steelblue", linewidth=1, label="trajectory")
 
-    ax_3d.scatter(*cam_pos, color="blue", s=60, zorder=5, label="camera")
+    draw_camera_frustum(ax_3d, T_world_cam, K)
 
-    for marker_id, positions in marker_world.items():
-        mean_pos = np.mean(positions, axis=0)
-        color = "green" if marker_id in visible_ids else "black"
-        ax_3d.scatter(*mean_pos, color=color, s=120, marker="*", zorder=6)
-        ax_3d.text(mean_pos[0], mean_pos[1], mean_pos[2],
-                   f" {marker_id}", fontsize=8, color=color)
+    for marker_id, transforms in marker_poses.items():
+        R, t = mean_pose(transforms)
+        visible = marker_id in visible_ids
+        draw_marker_frame(ax_3d, R, t, visible)
+        color = "green" if visible else "black"
+        ax_3d.text(t[0], t[1], t[2], f" {marker_id}", fontsize=8, color=color)
 
     ax_3d.legend(loc="upper left", fontsize=8)
     plt.pause(0.001)
@@ -143,10 +210,11 @@ def main():
     fig, ax_img, ax_3d = setup_plot()
 
     detections = []
-    world_positions: dict[int, list] = {}
+    marker_poses: dict[int, list] = {}  # marker_id → list of T_world_marker (4x4)
     traj_pts = []
     last_frame_rgb = None
     last_corners, last_ids = None, None
+    last_T_world_cam = np.eye(4)
 
     for frame_idx, (ts_ns, rel_path) in enumerate(image_paths):
         T_world_cam = gt_poses.get(ts_ns)
@@ -169,6 +237,7 @@ def main():
 
         last_frame_rgb = frame_rgb
         last_corners, last_ids = corners, ids
+        last_T_world_cam = T_world_cam
 
         if ids is not None:
             rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(
@@ -189,7 +258,7 @@ def main():
                     "rx_cam": r_cam[0], "ry_cam": r_cam[1], "rz_cam": r_cam[2],
                     "tx_world": t_world[0], "ty_world": t_world[1], "tz_world": t_world[2],
                 })
-                world_positions.setdefault(int(marker_id), []).append(t_world)
+                marker_poses.setdefault(int(marker_id), []).append(T_world_marker)
 
                 print(
                     f"  [{rel_path}] id={marker_id:3d}  "
@@ -199,16 +268,16 @@ def main():
 
         if frame_idx % PLOT_EVERY == 0:
             redraw(ax_img, ax_3d, frame_rgb, corners, ids,
-                   traj_pts, cam_pos, world_positions)
+                   traj_pts, T_world_cam, K, marker_poses)
 
     # final redraw with complete data
     redraw(ax_img, ax_3d, last_frame_rgb, last_corners, last_ids,
-           traj_pts, cam_pos, world_positions)
+           traj_pts, last_T_world_cam, K, marker_poses)
     print(f"\nDetected {len(detections)} observations.")
 
     if not detections:
         plt.ioff()
-        plt.show()
+        fig.show()
         return
 
     # --- per-frame detections CSV ---
@@ -225,18 +294,19 @@ def main():
     # --- averaged world position per marker id CSV ---
     print("\n--- Marker world positions (averaged over all observations) ---")
     marker_rows = []
-    for marker_id, positions in sorted(world_positions.items()):
-        mean_pos = np.mean(positions, axis=0)
+    for marker_id, transforms in sorted(marker_poses.items()):
+        _, mean_t = mean_pose(transforms)
+        positions = np.array([T[:3, 3] for T in transforms])
         std_pos = np.std(positions, axis=0)
         marker_rows.append({
             "marker_id": marker_id,
-            "n_obs": len(positions),
-            "tx_world": mean_pos[0], "ty_world": mean_pos[1], "tz_world": mean_pos[2],
+            "n_obs": len(transforms),
+            "tx_world": mean_t[0], "ty_world": mean_t[1], "tz_world": mean_t[2],
             "std_x": std_pos[0], "std_y": std_pos[1], "std_z": std_pos[2],
         })
         print(
-            f"  id={marker_id:3d}  n={len(positions):4d}  "
-            f"pos=({mean_pos[0]:+.4f}, {mean_pos[1]:+.4f}, {mean_pos[2]:+.4f}) m  "
+            f"  id={marker_id:3d}  n={len(transforms):4d}  "
+            f"pos=({mean_t[0]:+.4f}, {mean_t[1]:+.4f}, {mean_t[2]:+.4f}) m  "
             f"std=({std_pos[0]:.4f}, {std_pos[1]:.4f}, {std_pos[2]:.4f}) m"
         )
 
