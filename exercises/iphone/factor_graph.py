@@ -84,26 +84,21 @@ def main():
 
     # PRIOR_NOISE: very tight (1 mm / 0.001 rad) — anchors the first pose to fix the
     # gauge freedom (the factor graph has no absolute reference without it).
-    PRIOR_NOISE    = gtsam.noiseModel.Diagonal.Sigmas(np.array([1e-3, 1e-3, 1e-3, 1e-3, 1e-3, 1e-3]))
 
     # ODOMETRY_NOISE: moderate (1 cm / 0.01 rad) — reflects typical IMU/wheel odometry drift
     # between consecutive frames. The relative motion T_rel comes from visual-inertial odometry here,
     # so it could be tighter; loosen it if using noisier odometry sources.
-    ODOMETRY_NOISE = gtsam.noiseModel.Diagonal.Sigmas(np.array([1e-2, 1e-2, 1e-2, 1e-2, 1e-2, 1e-2]))
 
     # MEASUREMENT_NOISE: models ArUco pose estimation uncertainty.
     # Rotation (0.05 rad ≈ 3°) is noisier than translation (0.02 m) because
     # small marker detection errors cause larger angular errors than positional ones.
-    MEASUREMENT_NOISE = gtsam.noiseModel.Diagonal.Sigmas(np.array([0.05, 0.05, 0.05, 0.02, 0.02, 0.02]))
 
     # graph collects all factors (constraints): prior, odometry, and ArUco measurements.
     # It defines the objective function that the optimiser will minimise.
-    graph = gtsam.NonlinearFactorGraph()
 
     # initial_estimate holds the starting value for every variable (X and L)
     # before optimisation. A good initial guess (here: visual-inertial odometry) helps the
     # nonlinear solver converge to the correct solution.
-    initial_estimate = gtsam.Values()
 
     # --- Auxiliary variables ---
     # These accumulate data across frames and are used for visualisation,
@@ -133,12 +128,10 @@ def main():
         # variable X(frame_idx) — the camera pose at this frame.
         # * unpacks the numpy array [tx, ty, tz] into three separate float arguments
         # because gtsam.Point3 expects Point3(tx, ty, tz), not Point3(array).
-        cur_pose_gtsam = gtsam.Pose3(gtsam.Rot3(T_world_cam[:3, :3]), gtsam.Point3(*T_world_cam[:3, 3]))
 
         # X(frame_idx) is the symbolic key for this camera pose variable in the graph.
         # X and L are shorthand generators: X(i) produces a unique integer key
         # that GTSAM uses to distinguish camera poses (X) from landmarks (L).
-        initial_estimate.insert(X(frame_idx), cur_pose_gtsam)
 
         if frame_idx == 0:
             # PriorFactorPose3 is a unary (absolute) factor that pins X(0) to cur_pose_gtsam.
@@ -147,7 +140,6 @@ def main():
             # (this ambiguity is called gauge freedom). The tight PRIOR_NOISE (1 mm / 0.001 rad)
             # effectively freezes the first camera pose, anchoring the whole map to the world frame.
             # Only X(0) needs a prior; every other pose is constrained through relative BetweenFactors.
-            graph.add(gtsam.PriorFactorPose3(X(frame_idx), cur_pose_gtsam, PRIOR_NOISE))
         else:
             # T_rel is the relative motion from the previous camera pose to the current one,
             # expressed in the previous camera frame: T_rel = inv(T_world_prev) @ T_world_cur.
@@ -156,9 +148,6 @@ def main():
             # X(frame_idx): it penalises deviations from T_rel weighted by ODOMETRY_NOISE.
             # Unlike the prior, BetweenFactors are relative — they only constrain the difference
             # between two variables, which is what odometry (and most sensors) naturally measures.
-            T_rel = np.linalg.inv(prev_T_world_cam) @ T_world_cam
-            odometry = gtsam.Pose3(gtsam.Rot3(T_rel[:3, :3]), gtsam.Point3(*T_rel[:3, 3]))
-            graph.add(gtsam.BetweenFactorPose3(X(frame_idx - 1), X(frame_idx), odometry, ODOMETRY_NOISE))
 
         prev_T_world_cam = T_world_cam  # slide the window: current becomes previous for the next iteration
 
@@ -213,11 +202,7 @@ def main():
                 # constraints simultaneously, weighted by MEASUREMENT_NOISE.
                 # L(marker_id) is initialised only on its first sighting (exists() guard):
                 # subsequent detections just add more factors without touching initial_estimate.
-                T_cam_marker_gtsam = gtsam.Pose3(gtsam.Rot3(T_cam_marker[:3, :3]), gtsam.Point3(*T_cam_marker[:3, 3]))
-                graph.add(gtsam.BetweenFactorPose3(X(frame_idx), L(marker_id), T_cam_marker_gtsam, MEASUREMENT_NOISE))
                 if not initial_estimate.exists(L(marker_id)):
-                    T_world_marker_gtsam = gtsam.Pose3(gtsam.Rot3(T_world_marker[:3, :3]), gtsam.Point3(*T_world_marker[:3, 3]))
-                    initial_estimate.insert(L(marker_id), T_world_marker_gtsam)
 
 
         # Append the current camera position to the trajectory and refresh the live plot.
@@ -237,8 +222,6 @@ def main():
     # the resulting linear system, damping the step with a trust-region parameter (lambda).
     # graph.error() evaluates the objective at a given Values; comparing initial vs. final
     # error gives a quick sanity check that the optimisation converged and improved the estimate.
-    params = gtsam.LevenbergMarquardtParams()
-    optimizer = gtsam.LevenbergMarquardtOptimizer(graph, initial_estimate, params)
     print(f"\nInitial error: {graph.error(initial_estimate):.4f}")
     plt.close(fig)
     result = animate_optimisation(optimizer, graph, initial_estimate, traj_pts,
